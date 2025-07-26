@@ -1,11 +1,13 @@
+// frontend/src/config/webcontainer.js
 import { WebContainer } from '@webcontainer/api';
 
-let webContainerInstance = null;
-
+let webcontainerInstance; // Singleton instance
 
 export const getWebContainer = async () => {
-    if (webContainerInstance === null) {
-        webContainerInstance = await WebContainer.boot();
+    if (!webcontainerInstance) {
+        console.log("Booting WebContainer...");
+        webcontainerInstance = await WebContainer.boot();
+        console.log("WebContainer booted!");
     }
-    return webContainerInstance;
-}
+    return webcontainerInstance;
+};
