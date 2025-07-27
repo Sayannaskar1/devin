@@ -5,7 +5,7 @@ import axios from '../config/axios';
 import { initializeSocket, receiveMessage, sendMessage, removeMessageListener } from '../config/socket';
 import Markdown from 'markdown-to-jsx';
 import hljs from 'highlight.js';
-import { getWebContainer } from '../config/webContainer';
+import { getWebContainer } from '../config/webContainer'; // Corrected import path case
 
 // Import specific language definitions for highlight.js
 import 'highlight.js/styles/atom-one-dark.css';
@@ -392,13 +392,12 @@ const Project = () => {
                     aiPayload = JSON.parse(data.message);
                     // The AI's response format (from ai.service.js) typically has 'text' for simple messages
                     // and 'fileTree', 'buildCommand', 'startCommand' for code projects.
-                    // It does NOT have a top-level 'type' field.
 
-                    // NEW LOGIC: Check for fileTree to identify code projects
+                    // Check if it's a code project based on presence of fileTree
                     if (aiPayload.fileTree && typeof aiPayload.fileTree === 'object' && Object.keys(aiPayload.fileTree).length > 0) {
-                        aiContentForChat = typeof aiPayload.text === 'string'
-                            ? aiPayload.text // Use the descriptive text for chat summary
-                            : "AI has generated a project for you. Check the file explorer and terminal!"; // Fallback text
+                        aiContentForChat = typeof aiPayload.text === 'string' // Use aiPayload.text for description
+                            ? aiPayload.text
+                            : "AI has generated a project for you. Check the file explorer and terminal!";
 
                         setFileTree(aiPayload.fileTree);
                         console.log("AI provided fileTree:", aiPayload.fileTree);
@@ -502,6 +501,100 @@ const Project = () => {
             setTerminalOutput(prev => prev + "\nNo project is currently running to stop.\n");
         }
     }, [runProcess]);
+
+    // Function to run the project
+    const runProject = useCallback(async () => {
+        if (!webContainer || !isWebContainerReady) {
+            console.error("WebContainer not initialized or not ready.");
+            setTerminalOutput(prev => prev + "\nError: WebContainer not initialized or not ready. Please wait or refresh.\n");
+            return;
+        }
+        if (Object.keys(fileTree).length === 0) {
+            setTerminalOutput(prev => prev + "\nNo files in project to run. Ask AI to generate a project first.\n");
+            return;
+        }
+
+        setTerminalOutput(prev => prev + "\n--- Running Project ---\n");
+        setTerminalOutput(prev => prev + "Mounting files...\n");
+        await webContainer.mount(fileTree); // Ensure files are mounted before running
+        setTerminalOutput(prev => prev + "Files mounted.\n");
+
+        if (runProcess) {
+            setTerminalOutput(prev => prev + "Stopping previous process...\n");
+            runProcess.kill();
+            await runProcess.exit;
+            setRunProcess(null);
+            setTerminalOutput(prev => prev + "Previous process stopped.\n");
+        }
+
+        let process;
+        let exitCode;
+        let buildCommand = null;
+        let startCommand = null;
+
+        // Try to get build/start commands from fileTree (if AI provided them)
+        if (fileTree['package.json']) {
+            try {
+                const packageJsonContent = JSON.parse(fileTree['package.json'].file.contents);
+                if (packageJsonContent.scripts) {
+                    if (packageJsonContent.scripts.install) { // Check for a custom 'install' script
+                        buildCommand = { mainItem: "npm", commands: ["install"] };
+                    }
+                    if (packageJsonContent.scripts.start) { // Check for a custom 'start' script
+                        startCommand = { mainItem: "npm", commands: ["start"] };
+                    }
+                }
+            } catch (e) {
+                console.error("Error parsing package.json for commands:", e);
+                setTerminalOutput(prev => prev + "\nError: Could not parse package.json for build/start commands.\n");
+            }
+        }
+        // Fallback to AI's suggested commands if not found in package.json or for other languages
+        if (!buildCommand && project?.aiBuildCommand) buildCommand = project.aiBuildCommand;
+        if (!startCommand && project?.aiStartCommand) startCommand = project.aiStartCommand;
+
+
+        // Execute build command
+        if (buildCommand && buildCommand.mainItem && Array.isArray(buildCommand.commands)) {
+            setTerminalOutput(prev => prev + `Running build command: ${buildCommand.mainItem} ${buildCommand.commands.join(' ')}\n`);
+            process = await webContainer.spawn(buildCommand.mainItem, buildCommand.commands);
+            process.output.pipeTo(new WritableStream({
+                write(chunk) { setTerminalOutput(prev => prev + chunk); }
+            }));
+            exitCode = await process.exit;
+            setTerminalOutput(prev => prev + `Build command exited with code: ${exitCode}\n`);
+
+            if (exitCode !== 0) {
+                setTerminalOutput(prev => prev + "Build failed. Cannot start server.\n");
+                setIsProjectRunning(false);
+                return;
+            }
+        } else {
+            setTerminalOutput(prev => prev + "No explicit build command found or provided by AI. Skipping build step.\n");
+        }
+
+        // Execute start command
+        if (startCommand && startCommand.mainItem && Array.isArray(startCommand.commands)) {
+            setTerminalOutput(prev => prev + `Running start command: ${startCommand.mainItem} ${startCommand.commands.join(' ')}\n`);
+            process = await webContainer.spawn(startCommand.mainItem, startCommand.commands);
+            process.output.pipeTo(new WritableStream({
+                write(chunk) { setTerminalOutput(prev => prev + chunk); }
+            }));
+            setRunProcess(process);
+            setIsProjectRunning(true);
+
+            process.exit.then((exitCode) => {
+                setTerminalOutput(prev => prev + `\nProject process exited with code: ${exitCode}\n`);
+                setIsProjectRunning(false);
+                setRunProcess(null);
+                setIframeUrl(null);
+            });
+        } else {
+            setTerminalOutput(prev => prev + "No explicit start command found or provided by AI. Project not automatically launched.\n");
+            setIsProjectRunning(false);
+        }
+
+    }, [webContainer, isWebContainerReady, fileTree, runProcess, project?.aiBuildCommand, project?.aiStartCommand]); // Added AI commands to deps
 
     // Render loading state if project data isn't available yet
     if (isLoadingProject) {
@@ -666,112 +759,7 @@ const Project = () => {
                         {/* Actions (Run/Stop Buttons) - Now fixed and shrink-0 */}
                         <div className="actions flex gap-2 p-2 flex-shrink-0">
                             <button
-                                onClick={async () => {
-                                    if (!webContainer || !isWebContainerReady) {
-                                        console.error("WebContainer not initialized or not ready.");
-                                        setTerminalOutput(prev => prev + "\nError: WebContainer not initialized or not ready. Please wait or refresh.\n");
-                                        return;
-                                    }
-                                    if (Object.keys(fileTree).length === 0) {
-                                        setTerminalOutput(prev => prev + "\nNo files in project to run. Ask AI to generate a project first.\n");
-                                        return;
-                                    }
-
-                                    setTerminalOutput(prev => prev + "\n--- Running Project ---\n");
-                                    setTerminalOutput(prev => prev + "Mounting files...\n");
-                                    await webContainer.mount(fileTree);
-                                    setTerminalOutput(prev => prev + "Files mounted.\n");
-
-                                    if (runProcess) {
-                                        setTerminalOutput(prev => prev + "Stopping previous process...\n");
-                                        runProcess.kill();
-                                        await runProcess.exit;
-                                        setRunProcess(null);
-                                        setTerminalOutput(prev => prev + "Previous process stopped.\n");
-                                    }
-
-                                    let process;
-                                    let exitCode;
-
-                                    if (fileTree['package.json']) {
-                                        setTerminalOutput(prev => prev + "Installing dependencies (npm install)....\n");
-                                        process = await webContainer.spawn("npm", ["install"]);
-                                        process.output.pipeTo(new WritableStream({
-                                            write(chunk) { setTerminalOutput(prev => prev + chunk); }
-                                        }));
-                                        exitCode = await process.exit;
-                                        setTerminalOutput(prev => prev + `npm install exited with code: ${exitCode}\n`);
-
-                                        if (exitCode !== 0) {
-                                            setTerminalOutput(prev => prev + "npm install failed. Cannot start server.\n");
-                                            setIsProjectRunning(false);
-                                            return;
-                                        }
-
-                                        setTerminalOutput(prev => prev + "Starting server (npm start)....\n");
-                                        process = await webContainer.spawn("npm", ["start"]);
-
-                                    } else if (fileTree['main.cpp'] || fileTree['main.c']) {
-                                        const mainFile = fileTree['main.cpp'] ? 'main.cpp' : 'main.c';
-                                        setTerminalOutput(prev => prev + `Compiling ${mainFile} (g++ ${mainFile} -o main)....\n`);
-                                        process = await webContainer.spawn("g++", [mainFile, "-o", "main"]);
-                                        process.output.pipeTo(new WritableStream({
-                                            write(chunk) { setTerminalOutput(prev => prev + chunk); }
-                                        }));
-                                        exitCode = await process.exit;
-                                        setTerminalOutput(prev => prev + `Compilation exited with code: ${exitCode}\n`);
-
-                                        if (exitCode !== 0) {
-                                            setTerminalOutput(prev => prev + "Compilation failed. Cannot run executable.\n");
-                                            setIsProjectRunning(false);
-                                            return;
-                                        }
-
-                                        setTerminalOutput(prev => prev + "Running executable (./main)....\n");
-                                        process = await webContainer.spawn("./main");
-
-                                    } else if (fileTree['main.py']) {
-                                        setTerminalOutput(prev => prev + "Running Python script (python main.py)....\n");
-                                        process = await webContainer.spawn("python", ["main.py"]);
-
-                                    } else if (fileTree['Main.java']) {
-                                        setTerminalOutput(prev => prev + "Compiling Java code (javac Main.java)....\n");
-                                        process = await webContainer.spawn("javac", ["Main.java"]);
-                                        process.output.pipeTo(new WritableStream({
-                                            write(chunk) { setTerminalOutput(prev => prev + chunk); }
-                                        }));
-                                        exitCode = await process.exit;
-                                        setTerminalOutput(prev => prev + `Compilation exited with code: ${exitCode}\n`);
-
-                                        if (exitCode !== 0) {
-                                            setTerminalOutput(prev => prev + "Java compilation failed. Cannot run.\n");
-                                            setIsProjectRunning(false);
-                                            return;
-                                        }
-                                        setTerminalOutput(prev => prev + "Running Java class (java Main)....\n");
-                                        process = await webContainer.spawn("java", ["Main"]);
-                                    }
-                                    else {
-                                        setTerminalOutput(prev => prev + "Unknown project type. Cannot run automatically. Please provide a package.json, main.cpp, main.py, or Main.java.\n");
-                                        setIsProjectRunning(false);
-                                        return;
-                                    }
-
-                                    if (process) {
-                                        process.output.pipeTo(new WritableStream({
-                                            write(chunk) { setTerminalOutput(prev => prev + chunk); }
-                                        }));
-                                        setRunProcess(process);
-                                        setIsProjectRunning(true);
-
-                                        process.exit.then((exitCode) => {
-                                            setTerminalOutput(prev => prev + `\nProject process exited with code: ${exitCode}\n`);
-                                            setIsProjectRunning(false);
-                                            setRunProcess(null);
-                                            setIframeUrl(null);
-                                        });
-                                    }
-                                }}
+                                onClick={runProject} // Changed to call the new runProject function
                                 className={`p-2 px-4 rounded-md transition-colors flex items-center gap-2
                                             ${!isWebContainerReady || isProjectRunning ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'} text-white`}
                                 disabled={!isWebContainerReady || isProjectRunning}
@@ -852,7 +840,7 @@ const Project = () => {
                         onMouseDown={(e) => startResizing(e, 'editor')}
                         className="h-2 bg-gray-700 cursor-ns-resize hover:bg-blue-600 transition-colors duration-200 flex items-center justify-center group"
                     >
-                        <div className="w-1 h-10 bg-gray-600 rounded-full group-hover:bg-blue-300 transition-colors"></div>
+                        <div className="h-1 w-10 bg-gray-600 rounded-full group-hover:bg-blue-300 transition-colors"></div>
                     </div>
 
                     {/* Terminal Output Area */}
