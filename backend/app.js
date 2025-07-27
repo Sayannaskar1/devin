@@ -31,9 +31,12 @@ import { authUser } from './middleware/auth.middleware.js';
 const app = express();
 
 // --- Middleware ---
+// CORS configuration - CRITICAL FIX
 app.use(cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    credentials: true
+    // Use the exact FRONTEND_URL from your Railway environment variables
+    // This should be the full Vercel domain including https://
+    origin: process.env.FRONTEND_URL, // Use the environment variable directly
+    credentials: true // Allow cookies/authorization headers to be sent
 }));
 app.use(morgan('dev'));
 app.use(express.json());
@@ -72,7 +75,4 @@ app.use((err, req, res, next) => {
     res.status(500).send('Something broke on the server!');
 });
 
-// REMOVED: connect() call and initializeAIModel() call from here
-// These are now handled in server.js
-
-export default app; // Export the Express app instance
+export default app;
