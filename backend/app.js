@@ -2,16 +2,11 @@
 import express from 'express';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
-import cors from 'cors';
+import cors from 'cors'; // Import cors
 
 // --- IMPORTANT: Import your Mongoose models ---
 import userModel from './models/user.model.js';
 import projectModel from './models/project.model.js';
-
-// --- Multer config for file uploads (COMMENTED OUT BY DEFAULT) ---
-// If you want file uploads/profile pictures, uncomment these lines
-// and ensure config/multer.js exists and is correct.
-// import upload from './config/multer.js';
 
 // --- Route imports ---
 import userRoutes from './routes/user.routes.js';
@@ -21,31 +16,46 @@ import aiRoutes from './routes/ai.routes.js';
 // --- Middleware for Authentication Check ---
 import { authUser } from './middleware/auth.middleware.js';
 
-// --- AI Service Initialization (called from server.js) ---
-// import { initializeAIModel } from './services/ai.service.js'; // Not called directly here
-
-// --- DB Connection Utility (called from server.js) ---
-// import connectDB from './db/db.js'; // Not called directly here
-
 // --- Express App Setup ---
 const app = express();
 
-// --- Middleware ---
-// CORS configuration - CRITICAL FIX
+// --- CORS Configuration - ROBUST FIX ---
+const allowedOrigin = process.env.FRONTEND_URL; // Get the URL from environment variable
+
+console.log('DEBUG: CORS Allowed Origin (from .env):', allowedOrigin); // DEBUG LOG
+
 app.use(cors({
-    // Use the exact FRONTEND_URL from your Railway environment variables
-    // This should be the full Vercel domain including https://
-    origin: process.env.FRONTEND_URL, // Use the environment variable directly
-    credentials: true // Allow cookies/authorization headers to be sent
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+
+        // Allow requests from the specific FRONTEND_URL set in environment variables
+        if (origin === allowedOrigin) {
+            console.log('DEBUG: CORS Origin MATCHED:', origin); // DEBUG LOG
+            callback(null, true);
+        } else {
+            console.warn('CORS: Origin NOT ALLOWED:', origin); // DEBUG LOG
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true, // Allow cookies/authorization headers to be sent
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Explicitly allow methods
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'] // Explicitly allow headers
 }));
+
+// Handle preflight requests for all routes
+app.options('*', cors());
+
+
+// --- Middleware ---
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// --- Static files (COMMENTED OUT BY DEFAULT) ---
-// If you have ANY static files (like default avatars) served by backend, uncomment this.
-// Otherwise, remove it and the path/fileURLToPath imports.
+// --- Static files (Removed as per your instruction - no public folder) ---
+// If you decide to re-add static files, you'll need a 'public' folder
+// and uncomment the following lines:
 // import path from 'path';
 // import { fileURLToPath } from 'url';
 // const __filename = fileURLToPath(import.meta.url);
