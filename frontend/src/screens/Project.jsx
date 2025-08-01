@@ -961,7 +961,7 @@ const Project = () => {
     );
 }
 
-export default Proj
+export default Project
 
 
 // import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
