@@ -24,6 +24,7 @@ const allowedOrigin = process.env.FRONTEND_URL; // Get the URL from environment 
 
 console.log('DEBUG: CORS Allowed Origin (from .env):', allowedOrigin); // DEBUG LOG
 
+
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
